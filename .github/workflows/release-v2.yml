@@ -16,14 +16,11 @@ permissions:
 
 jobs:
   release:
-    runs-on: ${{ matrix.runner || matrix.os }}
+    runs-on: ${{ matrix.os }}  # 移除了复杂的 runner 逻辑
 
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-        include:
-          - os: macos-latest
-            runner: macos-14  # Apple Silicon runner
+        os: [macos-latest, windows-latest, ubuntu-latest]  # 保持简单
       fail-fast: false
 
     steps:
@@ -93,32 +90,27 @@ jobs:
           MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
           RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
           RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
-
+      
       - name: Build Mac
         if: matrix.os == 'macos-latest'
         run: |
           sudo -H pip install setuptools
           yarn build:npm mac
-          # 使用 electron-builder 直接构建通用应用
-          npx electron-builder --mac --x64 --arm64
+          yarn build:mac  # 使用原来的构建脚本
         env:
+          # 使用必要的签名环境变量（如果有）
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ vars.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          # 移除 TARGET_ARCH，因为我们要构建通用应用
-          CSC_IDENTITY_AUTO_DISCOVERY: true
-          CSC_FOR_PULL_REQUEST: true
+          # 关键：确保构建x64架构
+          npm_config_arch: x64
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=8192
           MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
           RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
           RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
-          # 关键：设置 Rust 编译标志以确保 x86_64 二进制文件的广泛兼容性
-          RUSTFLAGS: "-C target-cpu=x86-64"
-          # 确保 electron-builder 重新构建原生模块
-          npm_config_build_from_source: true
 
       - name: Build Windows
         if: matrix.os == 'windows-latest'
