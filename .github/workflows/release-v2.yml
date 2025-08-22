@@ -16,11 +16,11 @@ permissions:
 
 jobs:
   release:
-    runs-on: ${{ matrix.os }}  # 移除了复杂的 runner 逻辑
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]  # 保持简单
+        os: [macos-latest, windows-latest, ubuntu-latest]
       fail-fast: false
 
     steps:
@@ -39,18 +39,17 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Set package.json version
+        shell: bash
+        run: |
+          TAG="${{ steps.get-tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      # 添加 Rust 工具链安装步骤，确保 Rust 可用
-      - name: Install Rust toolchain
-        if: matrix.os == 'macos-latest'
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-apple-darwin
 
       - name: macos-latest dependencies fix
         if: matrix.os == 'macos-latest'
@@ -77,13 +76,22 @@ jobs:
       - name: Install Dependencies
         run: yarn install
 
+      - name: Pre-build diagnostics
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "Node version: $(node --version)"
+          echo "NPM version: $(npm --version)"
+          echo "Yarn version: $(yarn --version)"
+          echo "Current architecture: $(uname -m)"
+          echo "Listing node_modules/@libsql:"
+          ls -la node_modules/@libsql/ 2>/dev/null || echo "@libsql not found in node_modules"
+
       - name: Build Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get install -y rpm
           yarn build:npm linux
           yarn build:linux
-
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=8192
@@ -95,22 +103,49 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           sudo -H pip install setuptools
+          
+          # 确保构建目录存在
+          mkdir -p out/main
+          
+          # 重建原生模块，确保针对正确架构
+          npm rebuild --arch=x64
+          
+          # 构建应用
           yarn build:npm mac
-          yarn build:mac  # 使用原来的构建脚本
+          
+          # 检查文件是否存在
+          echo "Checking build output:"
+          ls -la out/main/ || echo "out/main/ does not exist"
+          find . -name "*.node" | head -10
+          
+          # 执行构建
+          yarn build:mac
         env:
-          # 使用必要的签名环境变量（如果有）
+          # 明确指定架构
+          npm_config_arch: x64
+          ELECTRON_BUILDER_ARCH: x64
+          
+          # 签名配置
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ vars.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          # 关键：确保构建x64架构
-          npm_config_arch: x64
+          
+          # 其他环境变量
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=8192
           MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
           RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
           RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
+
+      - name: Post-build diagnostics
+        if: matrix.os == 'macos-latest' && always()
+        run: |
+          echo "Checking dist directory:"
+          ls -la dist/ 2>/dev/null || echo "dist/ does not exist"
+          echo "Checking asar content:"
+          npx asar list dist/mac/*.app/Contents/Resources/app.asar 2>/dev/null | grep -E "(index.js|@libsql)" || echo "Cannot inspect asar"
 
       - name: Build Windows
         if: matrix.os == 'windows-latest'
