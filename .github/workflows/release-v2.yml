@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+  push:
+    tags:
+      - v*.*.*
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.runner || matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            runner: macos-14  # Apple Silicon runner
+      fail-fast: false
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get release tag
+        id: get-tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 添加 Rust 工具链安装步骤，确保 Rust 可用
+      - name: Install Rust toolchain
+        if: matrix.os == 'macos-latest'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
+
+      - name: macos-latest dependencies fix
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install python-setuptools
+
+      - name: Install corepack
+        run: corepack enable && corepack prepare yarn@4.6.0 --activate
+
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "dir=$(yarn config get cacheFolder)" >> $GITHUB_OUTPUT
+
+      - name: Cache yarn dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.yarn-cache-dir-path.outputs.dir }}
+            node_modules
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install Dependencies
+        run: yarn install
+
+      - name: Build Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get install -y rpm
+          yarn build:npm linux
+          yarn build:linux
+
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=8192
+          MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
+          RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
+          RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
+
+      - name: Build Mac
+        if: matrix.os == 'macos-latest'
+        run: |
+          sudo -H pip install setuptools
+          yarn build:npm mac
+          # 使用 electron-builder 直接构建通用应用
+          npx electron-builder --mac --x64 --arm64
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ vars.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ vars.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          # 移除 TARGET_ARCH，因为我们要构建通用应用
+          CSC_IDENTITY_AUTO_DISCOVERY: true
+          CSC_FOR_PULL_REQUEST: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=8192
+          MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
+          RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
+          RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
+          # 关键：设置 Rust 编译标志以确保 x86_64 二进制文件的广泛兼容性
+          RUSTFLAGS: "-C target-cpu=x86-64"
+          # 确保 electron-builder 重新构建原生模块
+          npm_config_build_from_source: true
+
+      - name: Build Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          yarn build:npm windows
+          yarn build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=8192
+          MAIN_VITE_MINERU_API_KEY: ${{ vars.MAIN_VITE_MINERU_API_KEY }}
+          RENDERER_VITE_AIHUBMIX_SECRET: ${{ vars.RENDERER_VITE_AIHUBMIX_SECRET }}
+          RENDERER_VITE_PPIO_APP_SECRET: ${{ vars.RENDERER_VITE_PPIO_APP_SECRET }}
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          draft: true
+          allowUpdates: true
+          makeLatest: false
+          tag: ${{ steps.get-tag.outputs.tag }}
+          artifacts: 'dist/*.exe,dist/*.zip,dist/*.dmg,dist/*.AppImage,dist/*.snap,dist/*.deb,dist/*.rpm,dist/*.tar.gz,dist/latest*.yml,dist/rc*.yml,dist/beta*.yml,dist/*.blockmap'
+          token: ${{ secrets.GITHUB_TOKEN }}
