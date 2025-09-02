@@ -29,7 +29,7 @@
     "build:win:arm64": "dotenv npm run build && electron-builder --win --arm64",
     "build:mac": "dotenv electron-vite build && electron-builder --mac --arm64 --x64",
     "build:mac:arm64": "dotenv electron-vite build && electron-builder --mac --arm64",
-    "build:mac:x64": "dotenv npm run build && electron-builder --mac --x64",
+    "build:mac:x64": "dotenv electron-vite build && electron-builder --mac --x64",
     "build:linux": "dotenv electron-vite build && electron-builder --linux --x64 --arm64",
     "build:linux:arm64": "dotenv electron-vite build && electron-builder --linux --arm64",
     "build:linux:x64": "dotenv electron-vite build && electron-builder --linux --x64",
@@ -64,7 +64,6 @@
     "jsdom": "26.1.0",
     "node-stream-zip": "^1.15.0",
     "notion-helper": "^1.3.22",
-    "opendal": "0.47.11",
     "os-proxy-config": "^1.1.2",
     "selection-hook": "^0.9.23",
     "turndown": "7.2.0"
